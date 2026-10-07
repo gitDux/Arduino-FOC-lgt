@@ -1,9 +1,13 @@
 #include "../../hardware_api.h"
 
-#if defined(__AVR_ATmega328P__) || defined(__AVR_ATmega168__) || defined(__AVR_ATmega328PB__)
+#if defined(__AVR_ATmega328P__) || defined(__AVR_ATmega168__) || defined(__AVR_ATmega328PB__) || defined(__LGT8F__)
 
 #pragma message("")
+#if defined(__LGT8F__)
+#pragma message("SimpleFOC: compiling for LGT8F328D/LGT8F328P")
+#else
 #pragma message("SimpleFOC: compiling for Arduino/ATmega328 ATmega168 ATmega328PB")
+#endif
 #pragma message("")
 
 #define _PWM_FREQUENCY 32000
@@ -20,12 +24,15 @@ void _pinHighFrequency(const int pin, const long frequency){
   //  https://www.arxterra.com/9-atmega328p-timers/
   if (pin == 5 || pin == 6  ) {
       TCCR0A = ((TCCR0A & 0b11111100) | 0x01); // configure the pwm phase-corrected mode
+      TCCR0A |= pin == 5 ? _BV(COM0B1) : _BV(COM0A1);
       if(high_fq) TCCR0B = ((TCCR0B & 0b11110000) | 0x01); // set prescaler to 1 - 32kHz
       else TCCR0B = ((TCCR0B & 0b11110000) | 0x02); // set prescaler to 2 - 4kHz
   }else if (pin == 9 || pin == 10 ){
+      TCCR1A |= pin == 9 ? _BV(COM1A1) : _BV(COM1B1);
       if(high_fq) TCCR1B = ((TCCR1B & 0b11110000) | 0x01); // set prescaler to 1 - 32kHz
       else TCCR1B = ((TCCR1B & 0b11110000) | 0x02); // set prescaler to 2 - 4kHz
   }else if (pin == 3 || pin == 11){
+      TCCR2A |= pin == 3 ? _BV(COM2B1) : _BV(COM2A1);
       if(high_fq) TCCR2B = ((TCCR2B & 0b11110000) | 0x01); // set prescaler to 1 - 32kHz
       else TCCR2B = ((TCCR2B & 0b11110000) | 0x02); // set prescaler to 2 - 4kHz
   }
@@ -119,14 +126,39 @@ void _writeDutyCycle2PWM(float dc_a,  float dc_b, void* params){
   analogWrite(((GenericDriverParams*)params)->pins[1], 255.0f*dc_b);
 }
 
+#if defined(__LGT8F__)
+// LGT8F Arduino cores emulate ATmega328P, but their generic analogWrite()
+// contains ADC/DAC and extended-pin handling.  FOC only needs the six timer
+// PWM outputs, so write their compare registers directly.  This also keeps
+// the time-critical PWM update small and avoids pulling analogWrite() into
+// LGT8F 3PWM builds.
+static inline void _writeDutyCycleLGT(const int pin, const uint8_t duty) {
+  switch (pin) {
+    case 3:  OCR2B = duty; break;
+    case 5:  OCR0B = duty; break;
+    case 6:  OCR0A = duty; break;
+    case 9:  OCR1A = duty; break;
+    case 10: OCR1B = duty; break;
+    case 11: OCR2A = duty; break;
+  }
+}
+#endif
+
 // function setting the pwm duty cycle to the hardware
 // - BLDC motor - 3PWM setting
 // - hardware specific
 void _writeDutyCycle3PWM(float dc_a,  float dc_b, float dc_c, void* params){
   // transform duty cycle from [0,1] to [0,255]
+#if defined(__LGT8F__)
+  GenericDriverParams* driver_params = (GenericDriverParams*)params;
+  _writeDutyCycleLGT(driver_params->pins[0], (uint8_t)(255.0f*dc_a));
+  _writeDutyCycleLGT(driver_params->pins[1], (uint8_t)(255.0f*dc_b));
+  _writeDutyCycleLGT(driver_params->pins[2], (uint8_t)(255.0f*dc_c));
+#else
   analogWrite(((GenericDriverParams*)params)->pins[0], 255.0f*dc_a);
   analogWrite(((GenericDriverParams*)params)->pins[1], 255.0f*dc_b);
   analogWrite(((GenericDriverParams*)params)->pins[2], 255.0f*dc_c);
+#endif
 }
 
 // function setting the high pwm frequency to the supplied pins
